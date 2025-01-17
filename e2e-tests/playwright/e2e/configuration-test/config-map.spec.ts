@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { KubeClient } from "../../utils/kube-client";
-import { LOGGER } from "../../utils/logger";
 import { Common } from "../../utils/common";
 import { UIhelper } from "../../utils/ui-helper";
+import * as yaml from "js-yaml";
 
 test.describe.skip("Change app-config at e2e test runtime", () => {
   test("Verify title change after ConfigMap modification", async ({ page }) => {
@@ -16,17 +16,28 @@ test.describe.skip("Change app-config at e2e test runtime", () => {
     const dynamicTitle = generateDynamicTitle();
     const uiHelper = new UIhelper(page);
     try {
-      LOGGER.info(`Updating ConfigMap '${configMapName}' with new title.`);
+      console.log(`Updating ConfigMap '${configMapName}' with new title.`);
       await kubeUtils.updateConfigMapTitle(
         configMapName,
         namespace,
         dynamicTitle,
       );
 
-      LOGGER.info(
+      console.log(
         `Restarting deployment '${deploymentName}' to apply ConfigMap changes.`,
       );
-      await kubeUtils.restartDeployment(deploymentName, namespace);
+      // await kubeUtils.restartDeployment(deploymentName, namespace);
+      await kubeUtils.restartDeploymentWithAnnotation(deploymentName, namespace);
+
+      console.log(`Verifying ConfigMap '${configMapName}' contains the new title.`);
+      const updatedConfigMap = await kubeUtils.getConfigMap(configMapName, namespace);
+      const appConfigYaml = updatedConfigMap.body.data[`${configMapName}.yaml`];
+
+      const appConfig = yaml.load(appConfigYaml) as any;
+      const updatedTitle = appConfig?.app?.title;
+
+      console.log(`Updated title in ConfigMap: ${updatedTitle}`);
+      expect(updatedTitle).toBe(dynamicTitle);
 
       const common = new Common(page);
       await page.context().clearCookies();
@@ -37,11 +48,23 @@ test.describe.skip("Change app-config at e2e test runtime", () => {
       await uiHelper.verifyHeading("Welcome back!");
       await uiHelper.verifyText("Quick Access");
       await expect(page.locator("#search-bar-text-field")).toBeVisible();
-      LOGGER.info("Verifying new title in the UI...");
-      expect(await page.title()).toContain(dynamicTitle);
-      LOGGER.info("Title successfully verified in the UI.");
+      console.log("Verifying new title in the UI...");
+
+      const title = await page.evaluate(() => document.title);
+      console.log(title);
+      console.log(page.title());
+      const title2 = await page.locator("title").textContent();
+      console.log(title2);
+
+      expect(title2).toContain(dynamicTitle);
+
+      await expect(page.locator("title")).toHaveText(new RegExp(dynamicTitle), {
+        timeout: 60000,
+      });
+
+      console.log("Title successfully verified in the UI.");
     } catch (error) {
-      LOGGER.error(
+      console.error(
         `Test failed during ConfigMap update or deployment restart:`,
         error,
       );
